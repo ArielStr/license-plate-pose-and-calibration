@@ -1,0 +1,44 @@
+# ==========================================
+# Python / IDE
+# ==========================================
+.venv/
+__pycache__/
+*.py[cod]
+.idea/
+.vscode/
+
+# ==========================================
+# Environment / secrets
+# ==========================================
+.env
+env
+
+# ==========================================
+# Unfinished / legacy work
+# ==========================================
+video_calibration/
+old/
+
+# ==========================================
+# Local images & cached detections
+# ==========================================
+cars_photos/
+roboflow_jsons/
+
+# ==========================================
+# Generated debug outputs
+# ==========================================
+debug/
+**/debug/
+
+# ==========================================
+# OS files
+# ==========================================
+.DS_Store
+Thumbs.db
+
+multi_plate_calibration/
+calibration/calibration_images
+
+# Generated outputs
+**/outputs/
