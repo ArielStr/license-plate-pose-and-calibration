@@ -27,6 +27,7 @@ from multi_plate_new.homographies import (
 
 from video_calibration.frame_sampler import SampledFrame
 from video_calibration.observation import PlateObservation
+from video_calibration.filtering import filter_observations
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -44,6 +45,8 @@ REFINEMENT_DEBUG_DIR = (
     / "debug"
     / "refinement_panels"
 )
+
+
 def roboflow_json_path_for_frame(
     video_name: str,
     frame_index: int,
@@ -60,6 +63,8 @@ def roboflow_json_path_for_frame(
     video_cache_dir.mkdir(parents=True, exist_ok=True)
 
     return video_cache_dir / f"frame_{frame_index:06d}.json"
+
+
 def save_detection_crops_panel(
     image: np.ndarray,
     detections: list,
@@ -505,7 +510,7 @@ def process_sampled_frame(
     refinement_panel_debug_dir: str | Path | None = None,
 ) -> list[PlateObservation]:
     """
-    Process one sampled video frame through the existing plate pipeline.
+    Process one sampled video frame through the plate pipeline.
 
     Flow:
 
@@ -517,37 +522,14 @@ def process_sampled_frame(
             -> yellow corner refinement
             -> homography
             -> PlateObservation
+            -> observation filtering
+            -> final refinement/debug panel
 
-    Args:
-        sampled_frame:
-            Frame, index and timestamp produced by frame_sampler.
+    The returned list preserves both accepted and rejected observations.
+    Filtering status is stored in:
 
-        api_key:
-            Roboflow API key.
-
-        min_confidence:
-            Minimum detector confidence.
-
-        min_detection_area:
-            Minimum bounding-box area before refinement.
-
-        min_width:
-            Minimum bounding-box width in pixels.
-
-        min_height:
-            Minimum bounding-box height in pixels.
-
-        nms_iou_threshold:
-            IoU threshold for duplicate detector predictions.
-
-        refinement_method:
-            Corner-refinement method.
-
-        refinement_debug:
-            Whether the yellow-refinement code should save debug outputs.
-
-    Returns:
-        One PlateObservation for every successfully refined plate.
+        observation.accepted
+        observation.rejection_reason
     """
     raw_result = detect_plates_in_frame(
         image=sampled_frame.image,
@@ -581,6 +563,7 @@ def process_sampled_frame(
         if detection.width >= min_width
         and detection.height >= min_height
     ]
+
     if not detections:
         print(
             f"Frame {sampled_frame.frame_index}: "
@@ -594,6 +577,17 @@ def process_sampled_frame(
         debug=refinement_debug,
         method=refinement_method,
     )
+
+    observations = build_observations(
+        sampled_frame=sampled_frame,
+        detections=detections,
+        refinement_results=refinement_results,
+    )
+
+    # Apply the calibration-observation filters BEFORE writing the panel,
+    # so the same panel can show ACCEPTED / REJECTED status.
+    filter_observations(observations)
+
     if refinement_panel_debug:
         if refinement_panel_debug_dir is None:
             panel_directory = REFINEMENT_DEBUG_DIR
@@ -603,34 +597,36 @@ def process_sampled_frame(
             )
 
         panel_path = (
-                panel_directory
-                / (
-                    f"frame_{sampled_frame.frame_index:06d}"
-                    f"_refinement.jpg"
-                )
+            panel_directory
+            / (
+                f"frame_{sampled_frame.frame_index:06d}"
+                f"_refinement.jpg"
+            )
         )
 
         save_refinement_crops_panel(
             image=sampled_frame.image,
             detections=detections,
             refinement_results=refinement_results,
+            observations=observations,
             output_path=panel_path,
             frame_index=sampled_frame.frame_index,
         )
 
-    observations = build_observations(
-        sampled_frame=sampled_frame,
-        detections=detections,
-        refinement_results=refinement_results,
+    accepted_count = sum(
+        observation.accepted
+        for observation in observations
     )
 
     print(
         f"Frame {sampled_frame.frame_index}: "
         f"{len(detections)} detections, "
-        f"{len(observations)} valid observations"
+        f"{len(observations)} valid observations, "
+        f"{accepted_count} accepted"
     )
 
     return observations
+
 
 def save_refinement_crops_panel(
     image: np.ndarray,
@@ -643,6 +639,7 @@ def save_refinement_crops_panel(
     cell_width: int = 430,
     cell_height: int = 310,
     crop_padding_px: int = 12,
+    observations: list[PlateObservation] | None = None,
 ) -> None:
     """
     Save a panel showing the refined corners selected for every detection.
@@ -662,7 +659,29 @@ def save_refinement_crops_panel(
         int(result["index"]): result
         for result in refinement_results
     }
+    observation_by_detection_index: dict[int, PlateObservation] = {}
 
+    if observations is not None:
+        # Match observations back to detections using the bbox copied into
+        # PlateObservation. This stays correct even if a successful
+        # refinement later fails homography construction.
+        for detection_index, detection in enumerate(detections):
+            detection_bbox = np.asarray(
+                detection.bbox_xyxy,
+                dtype=np.float64,
+            )
+
+            for observation in observations:
+                if np.allclose(
+                    observation.bbox,
+                    detection_bbox,
+                    rtol=0.0,
+                    atol=1e-6,
+                ):
+                    observation_by_detection_index[
+                        detection_index
+                    ] = observation
+                    break
     num_columns = min(max_columns, len(detections))
     num_rows = int(np.ceil(len(detections) / num_columns))
 
@@ -745,7 +764,26 @@ def save_refinement_crops_panel(
             and result.get("success", False)
         )
 
-        status_text = "SUCCESS" if success else "FAILED"
+        if not success:
+            status_text = "REFINEMENT FAILED"
+            status_color = (0, 0, 255)
+
+        else:
+            observation = observation_by_detection_index.get(
+                detection_index
+            )
+
+            if observation is None:
+                status_text = "REFINEMENT SUCCESS"
+                status_color = (0, 255, 255)
+
+            elif observation.accepted:
+                status_text = "ACCEPTED"
+                status_color = (0, 255, 0)
+
+            else:
+                status_text = "REJECTED"
+                status_color = (0, 0, 255)
 
         cv2.putText(
             panel,
@@ -757,17 +795,34 @@ def save_refinement_crops_panel(
             (cell_x + margin, cell_y + 22),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.53,
-            (255, 255, 255),
+            status_color,
             1,
             cv2.LINE_AA,
         )
 
+        second_line = (
+            f"bbox={crop_x_max - crop_x_min}x"
+            f"{crop_y_max - crop_y_min}"
+        )
+
+        observation = (
+            observation_by_detection_index.get(
+                detection_index
+            )
+        )
+
+        if (
+                observation is not None
+                and not observation.accepted
+                and observation.rejection_reason
+        ):
+            second_line += (
+                f" | {observation.rejection_reason}"
+            )
+
         cv2.putText(
             panel,
-            (
-                f"bbox={crop_x_max - crop_x_min}x"
-                f"{crop_y_max - crop_y_min}"
-            ),
+            second_line,
             (cell_x + margin, cell_y + 44),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.43,
@@ -801,11 +856,22 @@ def save_refinement_crops_panel(
                 point = tuple(integer_points[point_index])
                 next_point = tuple(integer_points[next_index])
 
+                observation = observation_by_detection_index.get(
+                    detection_index
+                )
+
+                if observation is None:
+                    quad_color = (0, 255, 255)
+                elif observation.accepted:
+                    quad_color = (0, 255, 0)
+                else:
+                    quad_color = (0, 0, 255)
+
                 cv2.line(
                     crop,
                     point,
                     next_point,
-                    (0, 255, 0),
+                    quad_color,
                     2,
                     cv2.LINE_AA,
                 )

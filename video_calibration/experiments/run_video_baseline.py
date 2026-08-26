@@ -28,9 +28,7 @@ load_dotenv(
 from video_calibration.frame_sampler import sample_video_frames
 from video_calibration.frame_processor import process_sampled_frame
 from video_calibration.calibration import (
-    CalibrationPipelineConfig,
-    run_iterative_calibration,
-    print_calibration_result,
+    estimate_calibration_once,
 )
 from video_calibration.filtering import (
     filter_observations,
@@ -38,7 +36,6 @@ from video_calibration.filtering import (
     print_filter_summary,
     print_observation_geometry,
 )
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 VIDEO_PATH = PROJECT_ROOT / "cars_photos" / "test_video.mov"
 
@@ -65,12 +62,13 @@ debug_frames_dir.mkdir(
 )
 def main() -> None:
     all_observations = []
-
+    sampled_frames_count = 0
     for sampled_frame in sample_video_frames(
         VIDEO_PATH,
         every_n_frames=10,
-        max_sampled_frames=5,
+        max_sampled_frames=None,
     ):
+        sampled_frames_count += 1
         frame_path = (
                 debug_frames_dir
                 / f"frame_{sampled_frame.frame_index:06d}.jpg"
@@ -89,7 +87,7 @@ def main() -> None:
             use_cached_json=True,
             refinement_method="robust_mask_lines",
             refinement_debug=False,
-            refinement_panel_debug=True
+            refinement_panel_debug=False
         )
 
         all_observations.extend(observations)
@@ -107,7 +105,9 @@ def main() -> None:
         f"{len(accepted_observations)}"
     )
     print("\n========== RESULT ==========")
-    print(f"Total observations: {len(all_observations)}")
+    print(f"Sampled frames       : {sampled_frames_count}")
+    print(f"Total observations   : {len(all_observations)}")
+    print(f"Accepted observations: {len(accepted_observations)}")
 
     # for observation in all_observations:
     #     print(
@@ -117,12 +117,6 @@ def main() -> None:
     #         f"area={observation.area:.1f}"
     #     )
 
-    calibration_config = CalibrationPipelineConfig(
-        min_observations=3,
-        max_observation_residual=0.08,
-        max_rejection_fraction=0.35,
-    )
-
     # calibration_result = run_iterative_calibration(
     #     accepted_observations,
     #     config=calibration_config,
@@ -131,9 +125,7 @@ def main() -> None:
     # print_calibration_result(
     #     calibration_result
     # )
-    from video_calibration.calibration import (
-        estimate_calibration_once,
-    )
+
 
     (
         K_est,

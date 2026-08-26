@@ -23,7 +23,7 @@ class ObservationFilterConfig:
     min_quad_area_px: float = 1_500.0
 
     # Reject highly degenerate or extremely stretched quadrilaterals.
-    min_quad_aspect_ratio: float = 1.2
+    min_quad_aspect_ratio: float = 1.8
     max_quad_aspect_ratio: float = 8.0
 
     # Minimum edge length of the refined quadrilateral.
@@ -34,6 +34,9 @@ class ObservationFilterConfig:
 
     max_opposite_width_ratio: float = 1.25
     max_opposite_height_ratio: float = 1.25
+
+    max_opposite_width_angle_diff_deg: float = 5
+    max_opposite_height_angle_diff_deg: float = 8
     # Allowed margin outside the image.
     # A small margin is useful because line intersections can occasionally
     # fall slightly outside the image boundary.
@@ -42,7 +45,17 @@ class ObservationFilterConfig:
     # Score threshold after all checks.
     min_quality_score: float = 0.35
 
+    min_refined_height_px: float = 45.0
 
+def refined_plate_height(
+    corners: np.ndarray,
+) -> float:
+    lengths = edge_lengths(corners)
+
+    right = float(lengths[1])
+    left = float(lengths[3])
+
+    return 0.5 * (left + right)
 def polygon_signed_area(points: np.ndarray) -> float:
     """
     Compute the signed area of a 2D polygon.
@@ -163,7 +176,89 @@ def opposite_edge_ratios(
         height_ratio = max(left, right) / minimum_height
 
     return float(width_ratio), float(height_ratio)
+def line_orientation_deg(
+    p1: np.ndarray,
+    p2: np.ndarray,
+) -> float:
+    delta = p2 - p1
 
+    angle = np.degrees(
+        np.arctan2(
+            delta[1],
+            delta[0],
+        )
+    )
+
+    return float(angle % 180.0)
+
+
+def orientation_difference_deg(
+    angle1: float,
+    angle2: float,
+) -> float:
+    difference = abs(
+        angle1 - angle2
+    )
+
+    return float(
+        min(
+            difference,
+            180.0 - difference,
+        )
+    )
+
+
+def opposite_edge_angle_differences(
+    corners: np.ndarray,
+) -> tuple[float, float]:
+    """
+    Return orientation differences between opposite edges.
+
+    Returns:
+        width_angle_diff:
+            Difference between top and bottom edges.
+
+        height_angle_diff:
+            Difference between left and right edges.
+    """
+    top_angle = line_orientation_deg(
+        corners[0],
+        corners[1],
+    )
+
+    bottom_angle = line_orientation_deg(
+        corners[3],
+        corners[2],
+    )
+
+    left_angle = line_orientation_deg(
+        corners[0],
+        corners[3],
+    )
+
+    right_angle = line_orientation_deg(
+        corners[1],
+        corners[2],
+    )
+
+    width_angle_diff = (
+        orientation_difference_deg(
+            top_angle,
+            bottom_angle,
+        )
+    )
+
+    height_angle_diff = (
+        orientation_difference_deg(
+            left_angle,
+            right_angle,
+        )
+    )
+
+    return (
+        width_angle_diff,
+        height_angle_diff,
+    )
 def compute_quality_score(
     observation: PlateObservation,
     config: ObservationFilterConfig,
@@ -244,6 +339,13 @@ def validate_observation(
 
     lengths = edge_lengths(corners)
 
+    plate_height = refined_plate_height(
+        corners
+    )
+
+    if plate_height < config.min_refined_height_px:
+        return False, "small_refined_plate_height"
+
     if float(np.min(lengths)) < config.min_edge_length_px:
         return False, "short_quad_edge"
 
@@ -286,6 +388,23 @@ def validate_observation(
     if height_ratio > config.max_opposite_height_ratio:
         return False, "opposite_height_edges_mismatch"
 
+    width_angle_diff, height_angle_diff = (
+        opposite_edge_angle_differences(
+            corners
+        )
+    )
+
+    if (
+            width_angle_diff
+            > config.max_opposite_width_angle_diff_deg
+    ):
+        return False, "opposite_width_angle_mismatch"
+
+    if (
+            height_angle_diff
+            > config.max_opposite_height_angle_diff_deg
+    ):
+        return False, "opposite_height_angle_mismatch"
     return True, None
 
 
@@ -398,6 +517,16 @@ def print_observation_geometry(
             )
         )
 
+        plate_height = refined_plate_height(
+            observation.corners
+        )
+
+        width_angle_diff, height_angle_diff = (
+            opposite_edge_angle_differences(
+                observation.corners
+            )
+        )
+
         status = (
             "ACCEPTED"
             if observation.accepted
@@ -407,11 +536,14 @@ def print_observation_geometry(
         print(
             f"Frame={observation.frame_index:6d} | "
             f"area={area:9.1f} | "
+            f"height={plate_height:6.1f} | "
             f"aspect={aspect_ratio:6.3f} | "
             f"min_edge={np.min(lengths):6.1f} | "
             f"width_ratio={width_ratio:5.3f} | "
             f"height_ratio={height_ratio:5.3f} | "
             f"score={observation.quality_score:.3f} | "
+            f"width_angle={width_angle_diff:5.1f} | "
+            f"height_angle={height_angle_diff:5.1f} | "
             f"{status}"
         )
 
