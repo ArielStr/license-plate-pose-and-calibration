@@ -7,17 +7,13 @@ import numpy as np
 
 
 @dataclass
-class PlateObservation:
+class PlateDetection:
     """
-    Represents one detected license plate in one video frame.
+    Represents one refined license-plate detection in one video frame.
 
-    This object is passed between the different stages of the
-    video-calibration pipeline:
-
-        detection
-            -> filtering
-            -> observation selection
-            -> calibration
+    This object intentionally contains only image-space information.
+    It does not contain calibration-specific state such as homographies,
+    and it does not contain the final 3D pose.
     """
 
     frame_index: int
@@ -32,32 +28,19 @@ class PlateObservation:
     # Shape: (4, 2)
     corners: np.ndarray
 
-    # Homography from the physical plate plane to the image.
-    # Shape: (3, 3)
-    homography: np.ndarray
-
     detection_confidence: float
 
-    # Filled or updated by the quality-filtering stage.
+    # Filled/updated by the geometric-quality filtering stage.
     quality_score: float = 0.0
-
-    # An observation may be rejected without being removed from the list.
-    # This makes debugging and visualization easier.
     accepted: bool = True
     rejection_reason: Optional[str] = None
 
-    # Reserved for the tracking stage.
-    # In the MVP this will usually remain None.
+    # Filled by the tracking stage.
     track_id: Optional[int] = None
 
     def __post_init__(self) -> None:
-        """
-        Convert inputs to consistent NumPy representations and validate
-        their basic shapes.
-        """
         self.bbox = np.asarray(self.bbox, dtype=np.float64)
         self.corners = np.asarray(self.corners, dtype=np.float64)
-        self.homography = np.asarray(self.homography, dtype=np.float64)
 
         if self.bbox.shape != (4,):
             raise ValueError(
@@ -67,12 +50,6 @@ class PlateObservation:
         if self.corners.shape != (4, 2):
             raise ValueError(
                 f"corners must have shape (4, 2), received {self.corners.shape}"
-            )
-
-        if self.homography.shape != (3, 3):
-            raise ValueError(
-                "homography must have shape (3, 3), "
-                f"received {self.homography.shape}"
             )
 
         if self.frame_index < 0:
@@ -88,26 +65,21 @@ class PlateObservation:
 
     @property
     def width(self) -> float:
-        """Bounding-box width in pixels."""
         x_min, _, x_max, _ = self.bbox
         return float(max(0.0, x_max - x_min))
 
     @property
     def height(self) -> float:
-        """Bounding-box height in pixels."""
         _, y_min, _, y_max = self.bbox
         return float(max(0.0, y_max - y_min))
 
     @property
     def area(self) -> float:
-        """Bounding-box area in pixels."""
         return self.width * self.height
 
     @property
     def center(self) -> np.ndarray:
-        """Bounding-box center as [x, y]."""
         x_min, y_min, x_max, y_max = self.bbox
-
         return np.array(
             [
                 0.5 * (x_min + x_max),
@@ -117,9 +89,6 @@ class PlateObservation:
         )
 
     def reject(self, reason: str) -> None:
-        """
-        Mark the observation as rejected while preserving it for debugging.
-        """
         if not reason:
             raise ValueError("A rejection reason must be provided")
 
@@ -127,7 +96,47 @@ class PlateObservation:
         self.rejection_reason = reason
 
     def accept(self) -> None:
-        """Mark the observation as accepted."""
         self.accepted = True
         self.rejection_reason = None
 
+
+@dataclass(frozen=True)
+class PlatePose:
+    """
+    Pose estimated from one refined plate detection.
+
+    distance_m and yaw_deg are the values shown to the user.
+    rvec/tvec are kept so later stages can visualize or smooth the
+    full pose without recomputing PnP.
+    """
+
+    distance_m: float
+    yaw_deg: float
+    rvec: np.ndarray
+    tvec: np.ndarray
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "rvec",
+            np.asarray(self.rvec, dtype=np.float64).reshape(3, 1),
+        )
+        object.__setattr__(
+            self,
+            "tvec",
+            np.asarray(self.tvec, dtype=np.float64).reshape(3, 1),
+        )
+
+
+@dataclass
+class PlateFrameResult:
+    """
+    Final per-frame product object for one plate.
+
+    V1 may contain a pose immediately after single-frame PnP.
+    Later versions can add raw/smoothed pose fields without changing
+    PlateDetection itself.
+    """
+
+    detection: PlateDetection
+    pose: Optional[PlatePose] = None
