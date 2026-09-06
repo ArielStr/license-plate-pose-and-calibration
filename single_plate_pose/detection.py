@@ -1,7 +1,10 @@
 from pathlib import Path
 import json
 
-from inference_sdk import InferenceHTTPClient
+from inference_sdk import (
+    InferenceHTTPClient,
+    InferenceConfiguration,
+)
 
 
 # ============================================================
@@ -53,19 +56,29 @@ def detect_plate_with_roboflow(
     client = InferenceHTTPClient(
         api_url="https://serverless.roboflow.com",
         api_key=api_key,
+    ).configure(
+        InferenceConfiguration(
+            api_key_transport="header"
+        )
     )
+
+    print(f"Sending to Roboflow: {image_path}")
 
     result = client.run_workflow(
         workspace_name="ariel-stoenescu",
-        workflow_id="general-segmentation-api-2",
+        workflow_id="general-segmentation-api-5",
         images={"image": image_path},
         parameters={"classes": "LicensePlate"},
         use_cache=True,
     )
 
-    predictions = find_predictions_recursive(
-        result
-    )
+    print("\n========== RAW ROBOFLOW RESULT ==========")
+    print(json.dumps(result, indent=2))
+    print("=========================================\n")
+
+    predictions = find_predictions_recursive(result)
+
+    print(f"Recursive predictions found: {len(predictions)}")
 
     if len(predictions) == 0:
         raise RuntimeError(

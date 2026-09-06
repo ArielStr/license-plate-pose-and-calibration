@@ -55,9 +55,8 @@ CALIBRATION_PATH = (
 IMAGE_PATH = (
     PROJECT_ROOT
     / "cars_photos"
-    / "yaw_experiment"
-    / "angle_1"
-    / "5m.jpeg"
+    / "multi_cars"
+    / "IMG_4425.jpeg"
 )
 
 OUTPUT_DIR = (
@@ -67,7 +66,7 @@ OUTPUT_DIR = (
 )
 
 MAX_PLATES = None
-METHOD = "robust_mask_lines"
+METHOD = "yellow_exit_ransac"
 USE_DISTORTION = False
 
 
