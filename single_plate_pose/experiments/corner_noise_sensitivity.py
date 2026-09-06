@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import cv2
@@ -17,8 +18,7 @@ from single_plate_pose.pose_estimation import estimate_plate_pose_from_K
 # ============================================================
 VISUALIZATION_SCALE = 20.0
 SAVE_VISUALIZATIONS = True
-API_KEY = "yuT6cPYTPnHnS2qKxXQ4"
-
+API_KEY = os.getenv("ROBOFLOW_API_KEY")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 CALIBRATION_PATH = (
