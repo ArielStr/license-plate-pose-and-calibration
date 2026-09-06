@@ -43,7 +43,9 @@ METHOD = "robust_mask_lines"
 # Use an environment variable instead of storing the API key in this file.
 # Windows PowerShell:
 #   $env:ROBOFLOW_API_KEY="your_key"
-API_KEY = "yuT6cPYTPnHnS2qKxXQ4"
+import os
+
+API_KEY = os.getenv("ROBOFLOW_API_KEY")
 
 # The main presentation cases.
 SIGMAS_TO_SHOW = [3.0, 5.0]
