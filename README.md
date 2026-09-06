@@ -170,8 +170,8 @@ This motivated the final temporal pipeline shown at the top of this README, wher
 | Frontal distance MAE (1–5 m) | **1.4 cm** |
 | Yaw MAE | **2.94°** |
 | Mean yaw variation across distance | **0.81°** |
-| `σ = 5 px` corner noise → mean `|Δdistance|` | **7.64 cm** |
-| `σ = 5 px` corner noise → mean `|Δyaw|` | **10.30°** |
+| `σ = 5 px` corner noise → mean distance change | **7.64 cm** |
+| `σ = 5 px` corner noise → mean yaw change | **10.30°** |
 
 Across the experiments, **distance estimation remained relatively robust,
 while yaw was substantially more sensitive to corner localization**.
